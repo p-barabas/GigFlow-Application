@@ -1,0 +1,479 @@
+openapi: 3.1.0
+info:
+  title: GigFlow API
+  version: 1.0.0
+servers:
+  - url: /api
+security:
+  - basicAuth: []
+
+paths:
+  /session:
+    get:
+      operationId: getCurrentSession
+      summary: Return the authenticated user
+      description: Returns the current demo user's display name, member identity and roles.
+      responses:
+        '200':
+          description: Authenticated user returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /performances:
+    get:
+      operationId: listPerformances
+      summary: List performances
+      description: >-
+        Returns every performance. An empty result is represented by an empty
+        JSON array. Requires the MEMBER or LEADER role.
+      x-required-roles:
+        - MEMBER
+        - LEADER
+      responses:
+        '200':
+          description: Performances returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PerformanceResponse'
+              examples:
+                populated:
+                  summary: Performance list
+                  value:
+                    - id: 9d23d9ac-032f-4d97-980c-f15aece22041
+                      title: Autumn Club Concert
+                      startsAt: '2026-11-14T19:30:00Z'
+                      venue: Blue Note Budapest
+                      invitedMemberIds: [anna, bence, csilla]
+                      responses:
+                        anna: ACCEPTED
+                        bence: TENTATIVE
+                empty:
+                  summary: No performances
+                  value: []
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: The performance list could not be loaded.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/InternalServerProblem'
+              example:
+                type: about:blank
+                title: Internal Server Error
+                status: 500
+                detail: The performance list could not be loaded.
+                instance: /api/performances
+    post:
+      operationId: createPerformance
+      summary: Create a performance
+      description: >-
+        Creates a new performance. The server assigns its identifier. Repeating
+        a request with the same title, venue and start time results in a conflict.
+        Requires the LEADER role.
+      x-required-roles:
+        - LEADER
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePerformanceRequest'
+            example:
+              title: Autumn Club Concert
+              venue: Blue Note Budapest
+              startsAt: '2026-11-14T19:30:00Z'
+              invitedMemberIds: [anna, bence, csilla]
+      responses:
+        '201':
+          description: Performance created.
+          headers:
+            Location:
+              description: Relative URI of the newly created performance.
+              required: true
+              schema:
+                type: string
+                format: uri-reference
+                pattern: '^/api/performances/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
+              example: /api/performances/9d23d9ac-032f-4d97-980c-f15aece22041
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceResponse'
+              example:
+                id: 9d23d9ac-032f-4d97-980c-f15aece22041
+                title: Autumn Club Concert
+                venue: Blue Note Budapest
+                startsAt: '2026-11-14T19:30:00Z'
+                invitedMemberIds: [anna, bence, csilla]
+                responses: {}
+        '400':
+          description: The request body is malformed or violates input constraints.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ValidationProblem'
+              example:
+                type: https://gigflow.example/problems/validation-error
+                title: Invalid request
+                status: 400
+                detail: The request contains invalid fields.
+                instance: /api/performances
+                violations:
+                  - field: title
+                    message: must not be blank
+        '409':
+          description: A performance already exists with the same title, venue and start time.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/PerformanceConflictProblem'
+              example:
+                type: https://gigflow.example/problems/performance-conflict
+                title: Performance conflict
+                status: 409
+                detail: A performance with the same title, venue and start time already exists.
+                instance: /api/performances
+                conflictingPerformanceId: 9d23d9ac-032f-4d97-980c-f15aece22041
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /performances/{performanceId}/response:
+    put:
+      operationId: respondToInvitation
+      summary: Create or replace an invitation response
+      description: >-
+        Records the invited member's availability. A later request replaces the
+        same member's earlier response. The response must arrive before the
+        performance starts. Requires the MEMBER role. The member identifier is
+        derived from the authenticated principal, so a caller cannot submit a
+        response for another member.
+      x-required-roles:
+        - MEMBER
+      parameters:
+        - name: performanceId
+          in: path
+          required: true
+          description: Identifier of the performance.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvailabilityRequest'
+            example:
+              availability: ACCEPTED
+      responses:
+        '200':
+          description: The response was recorded and the updated performance is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceResponse'
+              example:
+                id: 9d23d9ac-032f-4d97-980c-f15aece22041
+                title: Autumn Club Concert
+                startsAt: '2026-11-14T19:30:00Z'
+                venue: Blue Note Budapest
+                invitedMemberIds: [anna, bence, csilla]
+                responses:
+                  anna: ACCEPTED
+                  bence: TENTATIVE
+        '400':
+          description: The path parameters or request body are malformed or invalid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ValidationProblem'
+              example:
+                type: https://gigflow.example/problems/validation-error
+                title: Invalid request
+                status: 400
+                detail: The request contains invalid fields.
+                instance: /api/performances/9d23d9ac-032f-4d97-980c-f15aece22041/response
+                violations:
+                  - field: availability
+                    message: must be ACCEPTED, TENTATIVE or DECLINED
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The referenced performance does not exist.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/PerformanceNotFoundProblem'
+              example:
+                type: https://gigflow.example/problems/performance-not-found
+                title: Performance not found
+                status: 404
+                detail: The requested performance does not exist.
+                instance: /api/performances/00000000-0000-0000-0000-000000000099/response
+        '409':
+          description: The member was not invited or the response deadline has passed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/InvitationConflictProblem'
+              examples:
+                memberNotInvited:
+                  summary: Member was not invited
+                  value:
+                    type: https://gigflow.example/problems/member-not-invited
+                    title: Invitation conflict
+                    status: 409
+                    detail: Only an invited member may respond to the performance.
+                    instance: /api/performances/9d23d9ac-032f-4d97-980c-f15aece22041/response
+                deadlinePassed:
+                  summary: Performance has already started
+                  value:
+                    type: https://gigflow.example/problems/response-deadline-passed
+                    title: Invitation conflict
+                    status: 409
+                    detail: A response cannot be submitted at or after the performance start time.
+                    instance: /api/performances/9d23d9ac-032f-4d97-980c-f15aece22041/response
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+
+  responses:
+    Unauthorized:
+      description: HTTP Basic authentication is missing or invalid.
+      headers:
+        WWW-Authenticate:
+          description: HTTP Basic authentication challenge.
+          required: true
+          schema:
+            type: string
+            const: Basic realm="GigFlow"
+          example: Basic realm="GigFlow"
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Forbidden:
+      description: The authenticated user does not have the required role.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+  schemas:
+    CreatePerformanceRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+        - venue
+        - startsAt
+        - invitedMemberIds
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '.*\S.*'
+          description: Non-blank performance title.
+        venue:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '.*\S.*'
+          description: Non-blank venue name.
+        startsAt:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+          description: Future start time expressed in UTC.
+        invitedMemberIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: Member identifiers that receive an invitation.
+          items:
+            type: string
+            minLength: 1
+            pattern: '.*\S.*'
+
+    Availability:
+      type: string
+      enum:
+        - ACCEPTED
+        - TENTATIVE
+        - DECLINED
+
+    AvailabilityRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - availability
+      properties:
+        availability:
+          $ref: '#/components/schemas/Availability'
+
+    PerformanceResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - startsAt
+        - venue
+        - invitedMemberIds
+        - responses
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+          description: Performance start time expressed in UTC.
+        venue:
+          type: string
+        invitedMemberIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        responses:
+          type: object
+          description: Availability values keyed by member identifier.
+          additionalProperties:
+            $ref: '#/components/schemas/Availability'
+
+    UserSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - username
+        - displayName
+        - roles
+      properties:
+        username:
+          type: string
+        displayName:
+          type: string
+        memberId:
+          type:
+            - string
+            - 'null'
+        roles:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [MEMBER, LEADER]
+
+    ProblemDetail:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - detail
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+
+    ValidationViolation:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+
+    ValidationProblem:
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetail'
+        - type: object
+          required:
+            - violations
+          properties:
+            status:
+              type: integer
+              const: 400
+            violations:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/ValidationViolation'
+
+    PerformanceConflictProblem:
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetail'
+        - type: object
+          required:
+            - conflictingPerformanceId
+          properties:
+            status:
+              type: integer
+              const: 409
+            conflictingPerformanceId:
+              type: string
+              format: uuid
+
+    PerformanceNotFoundProblem:
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetail'
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 404
+
+    InvitationConflictProblem:
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetail'
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 409
+
+    InternalServerProblem:
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetail'
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 500
